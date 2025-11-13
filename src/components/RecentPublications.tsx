@@ -109,7 +109,7 @@ export function RecentPublications() {
                     }
                   </span>
                   <span>·</span>
-                  <span>{formatDate(pub.publishedAt || pub.createdAt)}</span>
+                  <span>{formatDate(pub.publishedAt || pub.createdAt || '')}</span>
                 </div>
               </div>
               <button className="apple-button-secondary text-xs">

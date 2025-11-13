@@ -1,3 +1,56 @@
+// 公众号API响应类型
+export interface WechatApiResponse {
+  code: number;
+  cost_money: number;
+  cut_words: string;
+  data: WechatArticle[];
+  data_number: number;
+  msg: string;
+  page: number;
+  remain_money: number;
+  total: number;
+  total_page: number;
+  [property: string]: any;
+}
+
+export interface WechatArticle {
+  /** 封面 */
+  avatar: string;
+  /** 分类 */
+  classify: string;
+  /** 正文 */
+  content: string;
+  /** 原始id */
+  ghid: string;
+  /** 发布地址 */
+  ip_wording: string;
+  /** 是否原创 */
+  is_original: number;
+  /** 再看数 */
+  looking: number;
+  /** 点赞数 */
+  praise: number;
+  /** 发布时间 */
+  publish_time: number;
+  publish_time_str: string;
+  /** 阅读数 */
+  read: number;
+  /** 文章原始短链接 */
+  short_link: string;
+  /** 文章标题 */
+  title: string;
+  /** 更新时间 */
+  update_time: number;
+  update_time_str: string;
+  /** 文章长连接 */
+  url: string;
+  /** wxid */
+  wx_id: string;
+  /** 公众号名字 */
+  wx_name: string;
+  [property: string]: any;
+}
+
 // 选题分析相关类型
 export interface TopicAnalysis {
   id: string;
@@ -9,6 +62,8 @@ export interface TopicAnalysis {
   completedAt?: string;
   totalArticles: number;
   avgEngagementRate: number;
+  errorMessage?: string;
+  apiResponse?: WechatApiResponse;
 }
 
 export interface Article {
@@ -25,6 +80,22 @@ export interface Article {
   engagementRate: number;
   aiSummary?: string;
   createdAt: string;
+
+  // 公众号特有字段
+  avatar?: string;
+  classify?: string;
+  ghid?: string;
+  ip_wording?: string;
+  is_original?: number;
+  looking?: number;
+  praise?: number;
+  publish_time?: number;
+  publish_time_str?: string;
+  short_link?: string;
+  update_time?: number;
+  update_time_str?: string;
+  wx_id?: string;
+  wx_name?: string;
 }
 
 export interface TopicInsight {
