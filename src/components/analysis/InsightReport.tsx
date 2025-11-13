@@ -12,12 +12,47 @@ interface InsightReportProps {
 
 export function InsightReport({ analysis, articles }: InsightReportProps) {
   const [showAllArticles, setShowAllArticles] = useState(false);
+  const [articleSortKey, setArticleSortKey] = useState<'praise' | 'read' | 'publish_time'>('praise');
 
-  const insightData = generateInsightReport(articles);
+  const insightData = generateInsightReport(articles, analysis.keyword);
   const { topLikedArticles, topEngagementArticles, wordCloud, insights, summary } = insightData;
   const sortedArticlesForModal = useMemo(() => {
-    return [...articles].sort((a, b) => (b.praise || 0) - (a.praise || 0));
-  }, [articles]);
+    const getPublishTimestamp = (article: WechatArticle) => {
+      if (article.publish_time && article.publish_time > 0) {
+        return article.publish_time;
+      }
+      if (article.publish_time_str) {
+        const parsed = Date.parse(article.publish_time_str);
+        return Number.isNaN(parsed) ? 0 : Math.floor(parsed / 1000);
+      }
+      return 0;
+    };
+
+    const getValue = (article: WechatArticle) => {
+      switch (articleSortKey) {
+        case 'read':
+          return article.read || 0;
+        case 'publish_time':
+          return getPublishTimestamp(article);
+        case 'praise':
+        default:
+          return article.praise || 0;
+      }
+    };
+
+    return [...articles].sort((a, b) => {
+      const diff = getValue(b) - getValue(a);
+      if (diff !== 0) return diff;
+
+      const praiseDiff = (b.praise || 0) - (a.praise || 0);
+      if (praiseDiff !== 0) return praiseDiff;
+
+      const readDiff = (b.read || 0) - (a.read || 0);
+      if (readDiff !== 0) return readDiff;
+
+      return getPublishTimestamp(b) - getPublishTimestamp(a);
+    });
+  }, [articles, articleSortKey]);
 
   const handlePrint = () => {
     window.print();
@@ -150,9 +185,9 @@ export function InsightReport({ analysis, articles }: InsightReportProps) {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* 高频词云 */}
           {wordCloud.length > 0 && (
-            <div className="bg-white p-6 rounded-lg shadow flex flex-col">
+            <div className="bg-white p-6 rounded-lg shadow flex flex-col h-[300px] overflow-hidden">
               <h3 className="text-lg font-semibold text-gray-900 mb-4">🔥 高频词云</h3>
-              <div className="flex flex-wrap gap-3 items-center justify-center min-h-[200px] p-4">
+              <div className="flex flex-wrap gap-3 items-center justify-center flex-1 p-4 overflow-hidden">
                 {wordCloud.map((item, index) => {
                   const fontSize = getFontSize(item.count, wordCloud[0].count);
                   return (
@@ -172,9 +207,9 @@ export function InsightReport({ analysis, articles }: InsightReportProps) {
 
           {/* 阅读量分布 */}
           {summary.readCountDistribution && (
-            <div className="bg-white p-6 rounded-lg shadow flex flex-col">
+            <div className="bg-white p-6 rounded-lg shadow flex flex-col h-[300px]">
               <h3 className="text-lg font-semibold text-gray-900 mb-4">📊 阅读量分布</h3>
-              <div className="space-y-3">
+              <div className="space-y-3 overflow-y-auto pr-2">
                 {summary.readCountDistribution.map((item) => (
                   <div key={item.range} className="flex items-center">
                     <div className="w-20 text-sm text-gray-600">{item.label}</div>
@@ -195,9 +230,9 @@ export function InsightReport({ analysis, articles }: InsightReportProps) {
 
           {/* 发布时间分布 */}
           {summary.publishTimeDistribution && (
-            <div className="bg-white p-6 rounded-lg shadow flex flex-col">
+            <div className="bg-white p-6 rounded-lg shadow flex flex-col h-[300px]">
               <h3 className="text-lg font-semibold text-gray-900 mb-4">⏰ 发布时间分布</h3>
-              <div className="space-y-3">
+              <div className="space-y-3 overflow-y-auto pr-2">
                 {summary.publishTimeDistribution.map((item) => (
                   <div key={item.range} className="flex items-center">
                     <div className="w-24 text-sm text-gray-600">{item.label}</div>
@@ -225,41 +260,30 @@ export function InsightReport({ analysis, articles }: InsightReportProps) {
             <h3 className="text-lg font-semibold text-gray-900 mb-4">🔥 热门文章榜</h3>
             <div className="space-y-4">
               {topLikedArticles.map((article, index) => (
-                <div key={article.id} className="flex items-start space-x-3 group">
-                  <div className="flex-shrink-0 w-8 h-8 bg-red-100 text-red-600 rounded-full flex items-center justify-center font-bold text-sm">
+                <div key={article.id} className="flex items-start space-x-3">
+                  <div className="flex-shrink-0 w-8 h-8 bg-red-100 text-red-600 rounded-full flex items-center justify-center font-bold text-xs">
                     {index + 1}
                   </div>
-                  <div className="flex-1 min-w-0">
+                  <div className="flex-1 min-w-0 space-y-1">
                     {article.url ? (
                       <a
                         href={article.url}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="text-sm font-medium text-gray-900 line-clamp-2 hover:text-blue-600 cursor-pointer block"
+                        className="text-sm font-medium text-gray-900 line-clamp-2 leading-snug hover:text-blue-600"
                         title="点击查看原文"
                       >
                         {article.title}
                       </a>
                     ) : (
-                      <h4 className="text-sm font-medium text-gray-900 line-clamp-2">
+                      <p className="text-sm font-medium text-gray-900 line-clamp-2 leading-snug">
                         {article.title}
-                      </h4>
+                      </p>
                     )}
-                    <p className="text-xs text-gray-500 mt-1">
-                      👍 {article.likeCount.toLocaleString()} 赞 · 👁️ {formatReadCount(article.readCount)} 阅读
+                    <p className="text-xs text-gray-500">
+                      👍 {article.likeCount.toLocaleString()} · 👁️ {formatReadCount(article.readCount)}
                     </p>
                   </div>
-                  {article.url && (
-                    <button
-                      onClick={() => window.open(article.url, '_blank', 'noopener,noreferrer')}
-                      className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 text-blue-600 hover:text-blue-700"
-                      title="查看原文"
-                    >
-                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                      </svg>
-                    </button>
-                  )}
                 </div>
               ))}
             </div>
@@ -272,41 +296,30 @@ export function InsightReport({ analysis, articles }: InsightReportProps) {
             <h3 className="text-lg font-semibold text-gray-900 mb-4">💬 高互动文章榜</h3>
             <div className="space-y-4">
               {topEngagementArticles.map((article, index) => (
-                <div key={article.id} className="flex items-start space-x-3 group">
-                  <div className="flex-shrink-0 w-8 h-8 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center font-bold text-sm">
+                <div key={article.id} className="flex items-start space-x-3">
+                  <div className="flex-shrink-0 w-8 h-8 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center font-bold text-xs">
                     {index + 1}
                   </div>
-                  <div className="flex-1 min-w-0">
+                  <div className="flex-1 min-w-0 space-y-1">
                     {article.url ? (
                       <a
                         href={article.url}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="text-sm font-medium text-gray-900 line-clamp-2 hover:text-blue-600 cursor-pointer block"
+                        className="text-sm font-medium text-gray-900 line-clamp-2 leading-snug hover:text-blue-600"
                         title="点击查看原文"
                       >
                         {article.title}
                       </a>
                     ) : (
-                      <h4 className="text-sm font-medium text-gray-900 line-clamp-2">
+                      <p className="text-sm font-medium text-gray-900 line-clamp-2 leading-snug">
                         {article.title}
-                      </h4>
+                      </p>
                     )}
-                    <p className="text-xs text-gray-500 mt-1">
-                      互动率 {article.engagementRate}% · 👁️ {formatReadCount(article.readCount)} 阅读
+                    <p className="text-xs text-gray-500">
+                      互动率 {article.engagementRate}% · 👁️ {formatReadCount(article.readCount)}
                     </p>
                   </div>
-                  {article.url && (
-                    <button
-                      onClick={() => window.open(article.url, '_blank', 'noopener,noreferrer')}
-                      className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 text-blue-600 hover:text-blue-700"
-                      title="查看原文"
-                    >
-                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                      </svg>
-                    </button>
-                  )}
                 </div>
               ))}
             </div>
@@ -336,63 +349,68 @@ export function InsightReport({ analysis, articles }: InsightReportProps) {
       {showAllArticles && (
         <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-lg max-w-6xl w-full max-h-[90vh] overflow-hidden flex flex-col">
-            <div className="flex items-center justify-between p-4 border-b border-gray-200">
+            <div className="flex flex-col gap-4 p-4 border-b border-gray-200 md:flex-row md:items-center md:justify-between">
               <h3 className="text-lg font-semibold text-gray-900">
                 所有文章 ({articles.length} 篇)
               </h3>
-              <button
-                onClick={() => setShowAllArticles(false)}
-                className="text-gray-400 hover:text-gray-600"
-              >
-                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center space-x-2 text-sm">
+                  {(
+                    [
+                      { key: 'praise', label: '按点赞' },
+                      { key: 'read', label: '按阅读' },
+                      { key: 'publish_time', label: '按发布时间' }
+                    ] as const
+                  ).map(option => (
+                    <button
+                      key={option.key}
+                      onClick={() => setArticleSortKey(option.key)}
+                      className={`px-3 py-1 rounded-full border text-xs transition-colors ${
+                        articleSortKey === option.key
+                          ? 'bg-blue-50 border-blue-300 text-blue-600'
+                          : 'border-gray-200 text-gray-500 hover:bg-gray-50'
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+                <button
+                  onClick={() => setShowAllArticles(false)}
+                  className="text-gray-400 hover:text-gray-600"
+                >
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
             </div>
 
             <div className="flex-1 overflow-y-auto p-4">
               <div className="space-y-4">
                 {sortedArticlesForModal.map((article, index) => (
-                  <div key={`${article.title}-${index}`} className="border-b border-gray-200 pb-4 group">
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1 min-w-0">
-                        {article.url ? (
-                          <a
-                            href={article.url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="font-medium text-gray-900 mb-2 hover:text-blue-600 cursor-pointer line-clamp-2 block"
-                            title="点击查看原文"
-                          >
-                            {article.title}
-                          </a>
-                        ) : (
-                          <h4 className="font-medium text-gray-900 mb-2 line-clamp-2">
-                            {article.title}
-                          </h4>
-                        )}
-                        <div className="flex items-center justify-between text-sm text-gray-600">
-                          <span>{article.wx_name}</span>
-                          <div className="flex items-center space-x-4">
-                            <span>👁️ {formatReadCount(article.read)}</span>
-                            <span>❤️ {formatReadCount(article.praise)}</span>
-                            {article.looking && article.looking > 0 && (
-                              <span>💬 {formatReadCount(article.looking)}</span>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                      {article.url && (
-                        <button
-                          onClick={() => window.open(article.url, '_blank', 'noopener,noreferrer')}
-                          className="ml-4 opacity-0 group-hover:opacity-100 transition-opacity duration-200 text-blue-600 hover:text-blue-700 flex-shrink-0"
-                          title="查看原文"
+                  <div key={`${article.title}-${index}`} className="border-b border-gray-100 pb-3">
+                    <div className="flex items-center gap-3">
+                      {article.url ? (
+                        <a
+                          href={article.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex-1 min-w-0 text-sm font-medium text-gray-900 hover:text-blue-600 truncate"
+                          title={article.title}
                         >
-                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                          </svg>
-                        </button>
+                          {article.title}
+                        </a>
+                      ) : (
+                        <p className="flex-1 min-w-0 text-sm font-medium text-gray-900 truncate" title={article.title}>
+                          {article.title}
+                        </p>
                       )}
+                      <div className="flex items-center gap-3 text-xs text-gray-500 flex-shrink-0">
+                        <span>👁️ {formatReadCount(article.read)}</span>
+                        <span>❤️ {formatReadCount(article.praise)}</span>
+                        <span>{article.publish_time_str?.split(' ')[0]}</span>
+                      </div>
                     </div>
                   </div>
                 ))}

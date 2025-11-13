@@ -306,7 +306,7 @@ export async function getAnalysisArticles(
 /**
  * 生成洞察报告数据
  */
-export function generateInsightReport(articles: WechatArticle[]) {
+export function generateInsightReport(articles: WechatArticle[], keyword?: string) {
   if (!articles || articles.length === 0) {
     return {
       topLikedArticles: [],
@@ -366,7 +366,7 @@ export function generateInsightReport(articles: WechatArticle[]) {
     }));
 
   // 生成词云数据（简单的词频统计）
-  const wordCloud = generateWordCloud(sanitizedArticles);
+  const wordCloud = generateWordCloud(sanitizedArticles, keyword);
 
   // 生成洞察建议
   const insights = generateInsights(sanitizedArticles);
@@ -403,21 +403,31 @@ export function generateInsightReport(articles: WechatArticle[]) {
 /**
  * 生成词云数据
  */
-function generateWordCloud(articles: WechatArticle[]) {
+function generateWordCloud(articles: WechatArticle[], keyword?: string) {
   const stopWords = new Set([
     '我们', '你们', '他们', '她们', '以及', '但是', '所以', '然后', '不是', '自己', '大家', '所有', '这个', '那个', '为了', '觉得',
     '进行', '通过', '提升', '提高', '发展', '方式', '非常', '可以', '已经', '不会', '还是', '这种', '这些', '那些', '针对', '关于',
-    '就是', '以及', '因为', '因此', '如果', '如何', '或者', '还是', '一些', '很多', '更加', '非常', '不断', '需要', '可以', '拥有',
-    '不会', '不会', '一定', '必须', '可能', '应该', '能够', '比如', '比如说', '比如在', '例如', '以及', '具有', '相关', '各种',
-    '作为', '以及', '一种', '一些', '那些', '这些', '这样', '那样', '这里', '那里', '哪里', '什么', '怎么', '哪些', '哪种',
-    '为了', '其中', '因为', '所以', '然后', '但是', '而且', '并且', '或者', '不过', '只是', '就是', '其实', '可能', '需要',
-    '用户', '读者', '观众', '朋友', '大家', '老师', '同学', '孩子', '父母', '家长', '企业', '公司', '客户', '平台', '产品',
-    '一个', '两个', '三个', '第一', '第二', '第三', '很多', '部分', '一些', '每个', '多个', '各种', '不同', '更加', '非常',
-    '提高', '提升', '发展', '实施', '完成', '达到', '实现', '带来', '创造', '打造', '发现', '选择', '带着', '注意', '其实',
-    '看到', '发现', '认为', '表示', '觉得', '希望', '喜欢', '关注', '了解', '分享', '推荐', '点击', '查看', '登录', '下载',
-    '文章', '内容', '标题', '摘要', '作者', '查看', '阅读', '点赞', '互动', '评论', '粉丝', '用户', '公众号', '微信',
+    '就是', '因为', '因此', '如果', '如何', '或者', '一些', '很多', '更加', '不断', '需要', '拥有',
+    '一定', '必须', '可能', '应该', '能够', '比如', '例如', '具有', '相关', '各种',
+    '作为', '一种', '一些', '那些', '这些', '这样', '那样', '这里', '那里', '哪里', '什么', '怎么', '哪些', '哪种',
+    '其中', '而且', '并且', '不过', '只是', '其实', '希望', '喜欢', '关注', '了解', '分享', '推荐',
+    '用户', '读者', '朋友', '老师', '同学', '孩子', '父母', '家长', '企业', '公司', '客户', '平台', '产品',
+    '一个', '两个', '三个', '第一', '第二', '第三', '部分', '每个', '多个', '不同', '更加',
+    '提高', '提升', '发展', '实施', '完成', '达到', '实现', '带来', '创造', '打造', '发现', '选择', '注意',
+    '看到', '认为', '表示', '觉得', '点击', '查看', '阅读', '点赞', '互动', '评论', '粉丝', '公众号', '微信',
     '同时', '目前', '现在', '未来', '去年', '今年', '本次', '此次', '每天', '每年', '每日', '每周', '近期', '最近', '快来', '速看'
   ]);
+
+  const keywordVariants = buildKeywordVariantSet(keyword);
+
+  const tokenReplacements: Array<{ pattern: RegExp; replace: string }> = [
+    { pattern: /江西水利电力大学/g, replace: '江西水电大学' },
+    { pattern: /教育发展基金/g, replace: '教育基金' },
+    { pattern: /发展基金/g, replace: '教育基金' },
+    { pattern: /教育基金会/g, replace: '教育基金' },
+    { pattern: /(?:茅台集团|贵州茅台)/g, replace: '茅台' },
+    { pattern: /(?:创新人才计划|创新人才)/g, replace: '创新人才' },
+  ];
 
   type WordStats = {
     docCount: number;
@@ -427,21 +437,26 @@ function generateWordCloud(articles: WechatArticle[]) {
   const wordMap = new Map<string, WordStats>();
 
   articles.forEach(article => {
-    const textSource = [article.title, article.content, article.wx_name]
+    const rawText = [article.title, article.content, article.wx_name]
       .filter(Boolean)
-      .join(' ')
-      .replace(/[^\u4e00-\u9fa5a-zA-Z0-9]/g, ' ');
+      .join(' ');
 
-    const candidates = textSource.match(/[\u4e00-\u9fa5a-zA-Z0-9]{2,}/g) || [];
+    let normalizedText = rawText;
+    tokenReplacements.forEach(({ pattern, replace }) => {
+      normalizedText = normalizedText.replace(pattern, replace);
+    });
+
+    normalizedText = normalizedText.replace(/[^\u4e00-\u9fa5a-zA-Z0-9]/g, ' ');
+
+    const candidates = normalizedText.match(/[\u4e00-\u9fa5a-zA-Z0-9]{2,}/g) || [];
     const uniqueTokens = new Set<string>();
 
     candidates.forEach(token => {
-      const normalized = token.toLowerCase();
-      const isNumeric = /^[0-9]+$/.test(normalized);
-      if (normalized.length < 2 || isNumeric || stopWords.has(normalized)) {
+      const canonicalToken = normalizeToken(token, stopWords, keywordVariants);
+      if (!canonicalToken) {
         return;
       }
-      uniqueTokens.add(normalized);
+      uniqueTokens.add(canonicalToken);
     });
 
     if (uniqueTokens.size === 0) {
@@ -459,15 +474,91 @@ function generateWordCloud(articles: WechatArticle[]) {
     });
   });
 
-  return Array.from(wordMap.entries())
-    .filter(([, stats]) => stats.docCount >= 5)
+  let wordEntries = Array.from(wordMap.entries());
+
+  let filteredEntries = wordEntries.filter(([, stats]) => stats.docCount >= 5);
+  if (filteredEntries.length < 10) {
+    filteredEntries = wordEntries.filter(([, stats]) => stats.docCount >= 3);
+  }
+  if (filteredEntries.length < 10) {
+    filteredEntries = wordEntries;
+  }
+
+  return filteredEntries
     .sort(([, a], [, b]) => b.score - a.score)
-    .slice(0, 30)
+    .slice(0, 15)
     .map(([word, stats]) => ({
       word,
       count: stats.docCount,
       score: parseFloat(stats.score.toFixed(2)),
     }));
+}
+
+function buildKeywordVariantSet(keyword?: string): Set<string> {
+  const variants = new Set<string>();
+  if (!keyword) return variants;
+
+  const normalized = keyword.replace(/\s+/g, '').toLowerCase();
+  if (!normalized) return variants;
+
+  const suffixes = ['先生', '老师', '女士', '小姐', '董事长', '教授', '总'];
+
+  variants.add(normalized);
+
+  suffixes.forEach(suffix => {
+    variants.add((normalized + suffix).toLowerCase());
+  });
+
+  const firstChar = normalized[0];
+  if (firstChar) {
+    variants.add(`${firstChar}总`);
+    variants.add(`${firstChar}老师`);
+    variants.add(`${firstChar}先生`);
+  }
+
+  return variants;
+}
+
+function normalizeToken(token: string, stopWords: Set<string>, keywordVariants: Set<string>): string | null {
+  let normalized = token.trim();
+  if (!normalized) return null;
+
+  normalized = normalized.replace(/(先生|女士|老师|小姐|董事长|总)$/g, '');
+
+  normalized = normalized.replace(/(人民币|元|块)$/g, '')
+    .replace(/万元$/g, '万')
+    .replace(/亿元$/g, '亿');
+
+  const lowerNoSpace = normalized.replace(/\s+/g, '').toLowerCase();
+
+  if (keywordVariants.has(lowerNoSpace)) {
+    return null;
+  }
+
+  if (/^[0-9]+$/.test(lowerNoSpace)) {
+    return null;
+  }
+
+  const tokenReplacements = new Map<string, string>([
+    ['江西水利电力大学', '江西水电大学'],
+    ['江西水电学院', '江西水电大学'],
+    ['教育发展基金', '教育基金'],
+    ['发展基金', '教育基金'],
+    ['教育基金会', '教育基金'],
+  ]);
+
+  tokenReplacements.forEach((replacement, pattern) => {
+    if (normalized.includes(pattern)) {
+      normalized = normalized.replace(pattern, replacement);
+    }
+  });
+
+  const lower = normalized.toLowerCase();
+  if (stopWords.has(lower)) {
+    return null;
+  }
+
+  return normalized;
 }
 
 /**
