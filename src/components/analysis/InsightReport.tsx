@@ -1,8 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { TopicAnalysis, WechatArticle } from '@/types';
 import { generateInsightReport } from '@/lib/analysisService';
+import { DataTestingPanel } from './DataTestingPanel';
 
 interface InsightReportProps {
   analysis: TopicAnalysis;
@@ -14,6 +15,9 @@ export function InsightReport({ analysis, articles }: InsightReportProps) {
 
   const insightData = generateInsightReport(articles);
   const { topLikedArticles, topEngagementArticles, wordCloud, insights, summary } = insightData;
+  const sortedArticlesForModal = useMemo(() => {
+    return [...articles].sort((a, b) => (b.praise || 0) - (a.praise || 0));
+  }, [articles]);
 
   const handlePrint = () => {
     window.print();
@@ -141,71 +145,76 @@ export function InsightReport({ analysis, articles }: InsightReportProps) {
         </div>
       </div>
 
-      {/* 词云图 */}
-      {wordCloud.length > 0 && (
-        <div className="bg-white p-6 rounded-lg shadow">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">🔥 热门关键词</h3>
-          <div className="flex flex-wrap gap-3 items-center justify-center min-h-[200px] p-4">
-            {wordCloud.map((item, index) => {
-              const fontSize = getFontSize(item.count, wordCloud[0].count);
-              return (
-                <span
-                  key={item.word}
-                  className={`${getColor(index)} hover:opacity-80 transition-opacity cursor-pointer font-medium`}
-                  style={{ fontSize: `${fontSize}px` }}
-                  title={`${item.word}: ${item.count}次`}
-                >
-                  {item.word}
-                </span>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* 阅读量分布 */}
-      {summary.readCountDistribution && (
-        <div className="bg-white p-6 rounded-lg shadow">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">📊 阅读量分布</h3>
-          <div className="space-y-3">
-            {summary.readCountDistribution.map((item) => (
-              <div key={item.range} className="flex items-center">
-                <div className="w-20 text-sm text-gray-600">{item.label}</div>
-                <div className="flex-1 mx-4 bg-gray-200 rounded-full h-6 relative">
-                  <div
-                    className="bg-blue-600 h-6 rounded-full flex items-center justify-center text-white text-xs"
-                    style={{ width: `${summary.totalArticles > 0 ? (item.count / summary.totalArticles) * 100 : 0}%` }}
-                  >
-                    {item.count > 0 && `${Math.round((item.count / summary.totalArticles) * 100)}%`}
-                  </div>
-                </div>
-                <div className="w-12 text-sm text-gray-900 text-right">{item.count}</div>
+      {/* 词云 / 阅读分布 / 发布时间分布 */}
+      {(wordCloud.length > 0 || summary.readCountDistribution || summary.publishTimeDistribution) && (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* 高频词云 */}
+          {wordCloud.length > 0 && (
+            <div className="bg-white p-6 rounded-lg shadow flex flex-col">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">🔥 高频词云</h3>
+              <div className="flex flex-wrap gap-3 items-center justify-center min-h-[200px] p-4">
+                {wordCloud.map((item, index) => {
+                  const fontSize = getFontSize(item.count, wordCloud[0].count);
+                  return (
+                    <span
+                      key={item.word}
+                      className={`${getColor(index)} hover:opacity-80 transition-opacity cursor-pointer font-medium`}
+                      style={{ fontSize: `${fontSize}px` }}
+                      title={`${item.word}: ${item.count}篇 · 热度 ${item.score}`}
+                    >
+                      {item.word}
+                    </span>
+                  );
+                })}
               </div>
-            ))}
-          </div>
-        </div>
-      )}
+            </div>
+          )}
 
-      {/* 发布时间分布 */}
-      {summary.publishTimeDistribution && (
-        <div className="bg-white p-6 rounded-lg shadow">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">⏰ 发布时间分布</h3>
-          <div className="space-y-3">
-            {summary.publishTimeDistribution.map((item) => (
-              <div key={item.range} className="flex items-center">
-                <div className="w-24 text-sm text-gray-600">{item.label}</div>
-                <div className="flex-1 mx-4 bg-gray-200 rounded-full h-6 relative">
-                  <div
-                    className="bg-green-600 h-6 rounded-full flex items-center justify-center text-white text-xs"
-                    style={{ width: `${summary.totalArticles > 0 ? (item.count / summary.totalArticles) * 100 : 0}%` }}
-                  >
-                    {item.count > 0 && `${Math.round((item.count / summary.totalArticles) * 100)}%`}
+          {/* 阅读量分布 */}
+          {summary.readCountDistribution && (
+            <div className="bg-white p-6 rounded-lg shadow flex flex-col">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">📊 阅读量分布</h3>
+              <div className="space-y-3">
+                {summary.readCountDistribution.map((item) => (
+                  <div key={item.range} className="flex items-center">
+                    <div className="w-20 text-sm text-gray-600">{item.label}</div>
+                    <div className="flex-1 mx-4 bg-gray-200 rounded-full h-6 relative">
+                      <div
+                        className="bg-blue-600 h-6 rounded-full flex items-center justify-center text-white text-xs"
+                        style={{ width: `${summary.totalArticles > 0 ? (item.count / summary.totalArticles) * 100 : 0}%` }}
+                      >
+                        {item.count > 0 && `${Math.round((item.count / summary.totalArticles) * 100)}%`}
+                      </div>
+                    </div>
+                    <div className="w-12 text-sm text-gray-900 text-right">{item.count}</div>
                   </div>
-                </div>
-                <div className="w-12 text-sm text-gray-900 text-right">{item.count}</div>
+                ))}
               </div>
-            ))}
-          </div>
+            </div>
+          )}
+
+          {/* 发布时间分布 */}
+          {summary.publishTimeDistribution && (
+            <div className="bg-white p-6 rounded-lg shadow flex flex-col">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">⏰ 发布时间分布</h3>
+              <div className="space-y-3">
+                {summary.publishTimeDistribution.map((item) => (
+                  <div key={item.range} className="flex items-center">
+                    <div className="w-24 text-sm text-gray-600">{item.label}</div>
+                    <div className="flex-1 mx-4 bg-gray-200 rounded-full h-6 relative">
+                      <div
+                        className="bg-green-600 h-6 rounded-full flex items-center justify-center text-white text-xs"
+                        style={{ width: `${summary.totalArticles > 0 ? (item.count / summary.totalArticles) * 100 : 0}%` }}
+                      >
+                        {item.count > 0 && `${Math.round((item.count / summary.totalArticles) * 100)}%`}
+                      </div>
+                    </div>
+                    <div className="w-12 text-sm text-gray-900 text-right">{item.count}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -216,18 +225,41 @@ export function InsightReport({ analysis, articles }: InsightReportProps) {
             <h3 className="text-lg font-semibold text-gray-900 mb-4">🔥 热门文章榜</h3>
             <div className="space-y-4">
               {topLikedArticles.map((article, index) => (
-                <div key={article.id} className="flex items-start space-x-3">
+                <div key={article.id} className="flex items-start space-x-3 group">
                   <div className="flex-shrink-0 w-8 h-8 bg-red-100 text-red-600 rounded-full flex items-center justify-center font-bold text-sm">
                     {index + 1}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <h4 className="text-sm font-medium text-gray-900 line-clamp-2 hover:text-blue-600 cursor-pointer">
-                      {article.title}
-                    </h4>
+                    {article.url ? (
+                      <a
+                        href={article.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-sm font-medium text-gray-900 line-clamp-2 hover:text-blue-600 cursor-pointer block"
+                        title="点击查看原文"
+                      >
+                        {article.title}
+                      </a>
+                    ) : (
+                      <h4 className="text-sm font-medium text-gray-900 line-clamp-2">
+                        {article.title}
+                      </h4>
+                    )}
                     <p className="text-xs text-gray-500 mt-1">
-                      👍 {article.likeCount.toLocaleString()} 赞
+                      👍 {article.likeCount.toLocaleString()} 赞 · 👁️ {formatReadCount(article.readCount)} 阅读
                     </p>
                   </div>
+                  {article.url && (
+                    <button
+                      onClick={() => window.open(article.url, '_blank', 'noopener,noreferrer')}
+                      className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 text-blue-600 hover:text-blue-700"
+                      title="查看原文"
+                    >
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                      </svg>
+                    </button>
+                  )}
                 </div>
               ))}
             </div>
@@ -240,18 +272,41 @@ export function InsightReport({ analysis, articles }: InsightReportProps) {
             <h3 className="text-lg font-semibold text-gray-900 mb-4">💬 高互动文章榜</h3>
             <div className="space-y-4">
               {topEngagementArticles.map((article, index) => (
-                <div key={article.id} className="flex items-start space-x-3">
+                <div key={article.id} className="flex items-start space-x-3 group">
                   <div className="flex-shrink-0 w-8 h-8 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center font-bold text-sm">
                     {index + 1}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <h4 className="text-sm font-medium text-gray-900 line-clamp-2 hover:text-blue-600 cursor-pointer">
-                      {article.title}
-                    </h4>
+                    {article.url ? (
+                      <a
+                        href={article.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-sm font-medium text-gray-900 line-clamp-2 hover:text-blue-600 cursor-pointer block"
+                        title="点击查看原文"
+                      >
+                        {article.title}
+                      </a>
+                    ) : (
+                      <h4 className="text-sm font-medium text-gray-900 line-clamp-2">
+                        {article.title}
+                      </h4>
+                    )}
                     <p className="text-xs text-gray-500 mt-1">
-                      互动率 {article.engagementRate}%
+                      互动率 {article.engagementRate}% · 👁️ {formatReadCount(article.readCount)} 阅读
                     </p>
                   </div>
+                  {article.url && (
+                    <button
+                      onClick={() => window.open(article.url, '_blank', 'noopener,noreferrer')}
+                      className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 text-blue-600 hover:text-blue-700"
+                      title="查看原文"
+                    >
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                      </svg>
+                    </button>
+                  )}
                 </div>
               ))}
             </div>
@@ -274,6 +329,9 @@ export function InsightReport({ analysis, articles }: InsightReportProps) {
         </div>
       )}
 
+      {/* 数据测试面板 */}
+      <DataTestingPanel articles={articles} />
+
       {/* 文章列表弹窗 */}
       {showAllArticles && (
         <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
@@ -294,20 +352,47 @@ export function InsightReport({ analysis, articles }: InsightReportProps) {
 
             <div className="flex-1 overflow-y-auto p-4">
               <div className="space-y-4">
-                {articles.map((article, index) => (
-                  <div key={`${article.title}-${index}`} className="border-b border-gray-200 pb-4">
-                    <h4 className="font-medium text-gray-900 mb-2 hover:text-blue-600 cursor-pointer">
-                      {article.title}
-                    </h4>
-                    <div className="flex items-center justify-between text-sm text-gray-600">
-                      <span>{article.wx_name}</span>
-                      <div className="flex items-center space-x-4">
-                        <span>👁️ {formatReadCount(article.read)}</span>
-                        <span>❤️ {formatReadCount(article.praise)}</span>
-                        {article.looking && article.looking > 0 && (
-                          <span>💬 {formatReadCount(article.looking)}</span>
+                {sortedArticlesForModal.map((article, index) => (
+                  <div key={`${article.title}-${index}`} className="border-b border-gray-200 pb-4 group">
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1 min-w-0">
+                        {article.url ? (
+                          <a
+                            href={article.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="font-medium text-gray-900 mb-2 hover:text-blue-600 cursor-pointer line-clamp-2 block"
+                            title="点击查看原文"
+                          >
+                            {article.title}
+                          </a>
+                        ) : (
+                          <h4 className="font-medium text-gray-900 mb-2 line-clamp-2">
+                            {article.title}
+                          </h4>
                         )}
+                        <div className="flex items-center justify-between text-sm text-gray-600">
+                          <span>{article.wx_name}</span>
+                          <div className="flex items-center space-x-4">
+                            <span>👁️ {formatReadCount(article.read)}</span>
+                            <span>❤️ {formatReadCount(article.praise)}</span>
+                            {article.looking && article.looking > 0 && (
+                              <span>💬 {formatReadCount(article.looking)}</span>
+                            )}
+                          </div>
+                        </div>
                       </div>
+                      {article.url && (
+                        <button
+                          onClick={() => window.open(article.url, '_blank', 'noopener,noreferrer')}
+                          className="ml-4 opacity-0 group-hover:opacity-100 transition-opacity duration-200 text-blue-600 hover:text-blue-700 flex-shrink-0"
+                          title="查看原文"
+                        >
+                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                          </svg>
+                        </button>
+                      )}
                     </div>
                   </div>
                 ))}

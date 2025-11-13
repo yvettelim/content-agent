@@ -143,6 +143,13 @@ export function saveArticles(analysisId: string, articles: WechatArticle[]): voi
   const createdAt = new Date().toISOString();
 
   articles.forEach(article => {
+    const safeRead = typeof article.read === 'number' ? article.read : parseInt(String(article.read || 0), 10) || 0;
+    const safePraise = typeof article.praise === 'number' ? article.praise : parseInt(String(article.praise || 0), 10) || 0;
+    const safeLooking = typeof article.looking === 'number' ? article.looking : parseInt(String(article.looking || 0), 10) || 0;
+    const publishTimestamp = typeof article.publish_time === 'number'
+      ? article.publish_time
+      : (article.publish_time_str ? Math.floor(new Date(article.publish_time_str).getTime() / 1000) : null);
+
     stmt.run(
       crypto.randomUUID(),
       analysisId,
@@ -150,11 +157,11 @@ export function saveArticles(analysisId: string, articles: WechatArticle[]): voi
       article.content,
       article.url,
       article.wx_name, // 使用公众号名称作为作者
-      article.publish_time_str,
-      article.read,
-      article.praise,
-      article.looking || 0,
-      article.read > 0 ? (article.praise + (article.looking || 0)) / article.read * 100 : 0,
+      publishTimestamp ?? null,
+      safeRead,
+      safePraise,
+      safeLooking,
+      safeRead > 0 ? ((safePraise + safeLooking) / safeRead) * 100 : 0,
       null, // AI摘要暂不生成
       createdAt,
       article.avatar,
@@ -162,8 +169,8 @@ export function saveArticles(analysisId: string, articles: WechatArticle[]): voi
       article.ghid,
       article.ip_wording,
       article.is_original,
-      article.looking,
-      article.praise,
+      safeLooking,
+      safePraise,
       article.publish_time_str,
       article.short_link,
       article.update_time,
@@ -261,11 +268,35 @@ export function getArticlesByAnalysisId(
   const listStmt = db.prepare(`
     SELECT * FROM articles
     WHERE analysis_id = ?
-    ORDER BY publish_time DESC
+    ORDER BY like_count DESC, watch_count DESC, read_count DESC, publish_time DESC, created_at DESC
     LIMIT ? OFFSET ?
   `);
 
-  const articles = listStmt.all(analysisId, pageSize, offset) as WechatArticle[];
+  const dbArticles = listStmt.all(analysisId, pageSize, offset) as Array<WechatArticle & {
+    read_count?: number;
+    like_count?: number;
+    watch_count?: number;
+    publish_time?: number | string | null;
+  }>;
+
+  const articles: WechatArticle[] = dbArticles.map(article => {
+    const numericRead = article.read ?? article.read_count ?? 0;
+    const numericPraise = article.praise ?? article.like_count ?? 0;
+    const numericLooking = article.looking ?? article.watch_count ?? 0;
+    const publishTimeValue = article.publish_time ?? article.publish_time_str;
+    const publishTime = typeof publishTimeValue === 'number'
+      ? publishTimeValue
+      : (publishTimeValue ? Math.floor(new Date(publishTimeValue).getTime() / 1000) : 0);
+
+    return {
+      ...article,
+      read: numericRead,
+      praise: numericPraise,
+      looking: numericLooking,
+      publish_time: publishTime,
+      publish_time_str: article.publish_time_str || (publishTime ? new Date(publishTime * 1000).toISOString() : ''),
+    } as WechatArticle;
+  });
 
   return { articles, total, totalPage };
 }

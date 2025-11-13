@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { WechatArticle } from '@/types';
 import { getAnalysisResult } from '@/lib/analysisService';
@@ -66,12 +66,29 @@ export default function ArticlesPage() {
     return count.toLocaleString();
   };
 
-  const filteredArticles = searchKeyword
-    ? articles.filter(article =>
-        article.title.toLowerCase().includes(searchKeyword.toLowerCase()) ||
-        article.wx_name?.toLowerCase().includes(searchKeyword.toLowerCase())
-      )
-    : articles;
+  const sortedArticles = useMemo(() => {
+    return [...articles].sort((a, b) => {
+      const praiseDiff = (b.praise || 0) - (a.praise || 0);
+      if (praiseDiff !== 0) return praiseDiff;
+      const lookingDiff = (b.looking || 0) - (a.looking || 0);
+      if (lookingDiff !== 0) return lookingDiff;
+      const readDiff = (b.read || 0) - (a.read || 0);
+      if (readDiff !== 0) return readDiff;
+      return (b.publish_time || 0) - (a.publish_time || 0);
+    });
+  }, [articles]);
+
+  const filteredArticles = useMemo(() => {
+    if (!searchKeyword) {
+      return sortedArticles;
+    }
+
+    const keyword = searchKeyword.toLowerCase();
+    return sortedArticles.filter(article =>
+      article.title.toLowerCase().includes(keyword) ||
+      article.wx_name?.toLowerCase().includes(keyword)
+    );
+  }, [sortedArticles, searchKeyword]);
 
   if (loading) {
     return (

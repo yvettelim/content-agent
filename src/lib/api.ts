@@ -1,4 +1,5 @@
 import { WechatApiResponse } from '@/types';
+import { validateApiResponse } from '@/lib/dataValidation';
 
 // API配置
 const API_CONFIG = {
@@ -55,6 +56,21 @@ export async function searchWechatArticles(params: WechatApiParams): Promise<Wec
     if (data.code !== 0) {
       throw new Error(`API错误: ${data.msg || '未知错误'}`);
     }
+
+    // 数据验证
+    const validation = validateApiResponse(data);
+
+    // 记录验证结果
+    if (validation.errors.length > 0) {
+      console.error('API数据验证失败:', validation.errors);
+      throw new Error(`数据验证失败: ${validation.errors.join('; ')}`);
+    }
+
+    if (validation.warnings.length > 0) {
+      console.warn('API数据验证警告:', validation.warnings);
+    }
+
+    console.log(`API数据验证通过: ${validation.stats.total}条数据，有效${validation.stats.valid}条`);
 
     return data;
   } catch (error) {

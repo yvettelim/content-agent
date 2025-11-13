@@ -61,17 +61,21 @@ export async function performTopicAnalysis(
 
     const apiParams: WechatApiParams = {
       kw: config.keyword,
-      sort_type: 1, // 按时间排序
-      mode: 1,      // 普通模式
+      sort_type: 1, // 按发布时间排序，确保覆盖完整时间范围
+      mode: 1,
       period: config.timeRange,
       page: 1,
       any_kw: config.includeAnyKeywords || '',
       ex_kw: config.excludeKeywords || '',
-      type: 1,      // 文章类型
+      type: 1,
     };
 
     // 计算需要获取的页数（每页默认20条，API返回）
-    const maxPages = Math.min(Math.ceil(config.articleCount / 20), config.maxPages || 10);
+    const minPagesNeeded = Math.ceil(config.articleCount / 20) || 1;
+    const maxPages = Math.min(
+      20,
+      config.maxPages ? Math.max(config.maxPages, minPagesNeeded) : Math.max(5, minPagesNeeded)
+    );
 
     const apiResponse = await fetchWechatArticles({
       ...apiParams,
@@ -92,9 +96,14 @@ export async function performTopicAnalysis(
 
     // 第3步：处理和分析数据
     const processedArticles = processArticles(apiResponse.data);
+    const filteredArticles = filterArticlesByTimeRange(processedArticles, config.timeRange);
+
+    const limitedArticles = config.articleCount > 0
+      ? filteredArticles.slice(0, config.articleCount)
+      : filteredArticles;
 
     // 计算平均互动率
-    const avgEngagementRate = calculateAvgEngagementRate(processedArticles);
+    const avgEngagementRate = calculateAvgEngagementRate(limitedArticles);
 
     // 第4步：保存数据到数据库
     onProgress?.({
@@ -112,13 +121,13 @@ export async function performTopicAnalysis(
       timeRange: config.timeRange,
       status: 'completed',
       completedAt: new Date().toISOString(),
-      totalArticles: processedArticles.length,
+      totalArticles: limitedArticles.length,
       avgEngagementRate,
       apiResponse,
     };
 
     // 保存最终结果
-    await saveAnalysis(completedAnalysis, processedArticles);
+    await saveAnalysis(completedAnalysis, limitedArticles);
 
     // 第5步：完成
     onProgress?.({
@@ -134,7 +143,7 @@ export async function performTopicAnalysis(
       createdAt: startTime,
     } as TopicAnalysis;
 
-    return { analysis: finalAnalysis, articles: processedArticles };
+    return { analysis: finalAnalysis, articles: limitedArticles };
 
   } catch (error) {
     // 更新分析状态为失败
@@ -166,18 +175,49 @@ export async function performTopicAnalysis(
 function processArticles(articles: WechatArticle[]): WechatArticle[] {
   return articles.map(article => {
     // 可以在这里进行数据清理、验证等处理
+    const publishTime = article.publish_time || (article.publish_time_str
+      ? Math.floor(new Date(article.publish_time_str).getTime() / 1000)
+      : 0);
+
     return {
       ...article,
       // 确保必要字段存在
       read: article.read || 0,
       praise: article.praise || 0,
       looking: article.looking || 0,
+      publish_time: publishTime,
+      publish_time_str: article.publish_time_str || (publishTime ? new Date(publishTime * 1000).toISOString() : ''),
     };
   });
 }
 
 /**
- * 计算单篇文章的互动率
+ * 根据时间范围过滤文章（单位：天）
+ */
+function filterArticlesByTimeRange(articles: WechatArticle[], timeRangeDays: number): WechatArticle[] {
+  if (!timeRangeDays || timeRangeDays <= 0) {
+    return articles;
+  }
+
+  const now = Date.now();
+  const rangeMs = timeRangeDays * 24 * 60 * 60 * 1000;
+
+  return articles.filter(article => {
+    const publishTime = typeof article.publish_time === 'number'
+      ? article.publish_time
+      : (article.publish_time_str ? Math.floor(new Date(article.publish_time_str).getTime() / 1000) : null);
+
+    if (!publishTime) {
+      return false;
+    }
+
+    const publishMs = publishTime * 1000;
+    return publishMs >= now - rangeMs && publishMs <= now;
+  });
+}
+
+/**
+ * 计算单篇文章的互动率（改进版）
  */
 function calculateEngagementRate(article: WechatArticle): number {
   const read = article.read || 0;
@@ -185,7 +225,16 @@ function calculateEngagementRate(article: WechatArticle): number {
   const looking = article.looking || 0;
 
   if (read === 0) return 0;
-  return ((praise + looking) / read) * 100;
+
+  // 数据合理性检查
+  if (praise > read || looking > read) {
+    console.warn(`文章"${article.title}"数据异常: 阅读${read}, 点赞${praise}, 在看${looking}`);
+    return 0;
+  }
+
+  const engagementRate = ((praise + looking) / read) * 100;
+
+  return parseFloat(engagementRate.toFixed(2));
 }
 
 /**
@@ -258,7 +307,7 @@ export async function getAnalysisArticles(
  * 生成洞察报告数据
  */
 export function generateInsightReport(articles: WechatArticle[]) {
-  if (articles.length === 0) {
+  if (!articles || articles.length === 0) {
     return {
       topLikedArticles: [],
       topEngagementArticles: [],
@@ -273,51 +322,71 @@ export function generateInsightReport(articles: WechatArticle[]) {
     };
   }
 
+  const sanitizedArticles = articles.map(article => ({
+    ...article,
+    read: typeof article.read === 'number' ? article.read : parseInt(String(article.read || 0), 10) || 0,
+    praise: typeof article.praise === 'number' ? article.praise : parseInt(String(article.praise || 0), 10) || 0,
+    looking: typeof article.looking === 'number' ? article.looking : parseInt(String(article.looking || 0), 10) || 0,
+  }));
+
   // 按点赞数排序
-  const topLikedArticles = articles
+  const topLikedArticles = sanitizedArticles
+    .filter(article => (article.praise || 0) > 0)
     .sort((a, b) => (b.praise || 0) - (a.praise || 0))
     .slice(0, 5)
     .map(article => ({
       id: article.title,
       title: article.title,
       likeCount: article.praise || 0,
+      readCount: article.read || 0,
+      url: article.url,
     }));
 
   // 按互动率排序
-  const topEngagementArticles = articles
-    .map(article => {
-      const engagementRate = calculateEngagementRate(article);
-      return {
-        ...article,
-        engagementRate: parseFloat(engagementRate.toFixed(2)),
-      };
-    })
-    .sort((a, b) => b.engagementRate - a.engagementRate)
+  const articlesWithScore = sanitizedArticles.map(article => {
+    const engagementRate = calculateEngagementRate(article);
+    const score = engagementRate * Math.log10((article.read || 1) + 1);
+    return {
+      ...article,
+      engagementRate: parseFloat(engagementRate.toFixed(2)),
+      engagementScore: score,
+    };
+  });
+
+  const topEngagementArticles = articlesWithScore
+    .filter(article => (article.read || 0) >= 500 && article.engagementRate > 0)
+    .sort((a, b) => b.engagementScore - a.engagementScore)
     .slice(0, 5)
     .map(article => ({
       id: article.title,
       title: article.title,
       engagementRate: article.engagementRate,
+      readCount: article.read || 0,
+      url: article.url,
     }));
 
   // 生成词云数据（简单的词频统计）
-  const wordCloud = generateWordCloud(articles);
+  const wordCloud = generateWordCloud(sanitizedArticles);
 
   // 生成洞察建议
-  const insights = generateInsights(articles);
+  const insights = generateInsights(sanitizedArticles);
 
   // 计算阅读量分布
-  const readCountDistribution = calculateReadCountDistribution(articles);
+  const readCountDistribution = calculateReadCountDistribution(sanitizedArticles);
 
   // 计算发布时间分布
-  const publishTimeDistribution = calculatePublishTimeDistribution(articles);
+  const publishTimeDistribution = calculatePublishTimeDistribution(sanitizedArticles);
 
   // 计算统计摘要
   const summary = {
-    totalArticles: articles.length,
-    avgEngagementRate: calculateAvgEngagementRate(articles),
-    avgReadCount: Math.round(articles.reduce((sum, a) => sum + (a.read || 0), 0) / articles.length),
-    avgPraiseCount: Math.round(articles.reduce((sum, a) => sum + (a.praise || 0), 0) / articles.length),
+    totalArticles: sanitizedArticles.length,
+    avgEngagementRate: calculateAvgEngagementRate(sanitizedArticles),
+    avgReadCount: sanitizedArticles.length > 0
+      ? Math.round(sanitizedArticles.reduce((sum, a) => sum + (a.read || 0), 0) / sanitizedArticles.length)
+      : 0,
+    avgPraiseCount: sanitizedArticles.length > 0
+      ? Math.round(sanitizedArticles.reduce((sum, a) => sum + (a.praise || 0), 0) / sanitizedArticles.length)
+      : 0,
     readCountDistribution,
     publishTimeDistribution,
   };
@@ -335,49 +404,70 @@ export function generateInsightReport(articles: WechatArticle[]) {
  * 生成词云数据
  */
 function generateWordCloud(articles: WechatArticle[]) {
-  // 简单的词频统计，实际应用中可以使用更复杂的分词算法
-  const allTitles = articles.map(a => a.title).join(' ');
-  const words = allTitles.match(/[\u4e00-\u9fa5]{2,}/g) || [];
-
-  // 无关词汇列表
   const stopWords = new Set([
-    // 无关词汇
-    '点击', '即可', '订阅', '但是', '可以', '不过', '而且', '或者', '还有', '已经',
-    '非常', '特别', '真正', '确实', '当然', '其实', '不过', '只是', '不要',
-    '需要', '应该', '能够', '可能', '一定', '必须', '将会', '已经', '正在',
-    '进行', '开始', '结束', '完成', '实现', '达到', '获得', '取得', '得到',
-    '做好', '用好', '发挥', '提供', '包含', '包括', '关于', '对于', '针对',
-    '根据', '基于', '通过', '由于', '因为', '所以', '因此', '然而', '但是',
-    '这种', '这些', '那些', '他们', '我们', '你们', '自己', '大家', '别人',
-    '人们', '用户', '消费者', '客户', '读者', '观众', '用户们', '各位',
-    '第', '一', '二', '三', '四', '五', '六', '七', '八', '九', '十', '百', '千', '万',
-    '个', '家', '种', '类', '样', '式', '法', '式', '方法', '方式', '类型',
-    '工作', '时间', '机会', '发展', '提高', '增加', '减少', '降低', '改善',
-    '优化', '升级', '更新', '创新', '突破', '成功', '失败', '问题', '挑战',
-    '机会', '风险', '优势', '劣势', '特点', '特色', '亮点', '要点', '重点',
-    '基础', '基本', '重要', '关键', '核心', '主要', '次要', '额外', '其他',
-    '不同', '各种', '多种', '许多', '很多', '少', '最', '更', '比较', '相对',
-    '绝对', '完全', '彻底', '深入', '广泛', '全面', '整体', '部分', '局部',
-    '详细', '具体', '一般', '通常', '普通', '特别', '特殊', '独特', '专属',
-    '独家', '专业', '全面', '系统', '完整', '准确', '正确', '及时', '快速',
-    '高效', '优质', '先进', '领先', '顶尖', '第一', '最佳', '最好', '优秀',
-    '良好', '正常', '合理', '适当', '合适', '正确', '准确', '精确', '精细'
+    '我们', '你们', '他们', '她们', '以及', '但是', '所以', '然后', '不是', '自己', '大家', '所有', '这个', '那个', '为了', '觉得',
+    '进行', '通过', '提升', '提高', '发展', '方式', '非常', '可以', '已经', '不会', '还是', '这种', '这些', '那些', '针对', '关于',
+    '就是', '以及', '因为', '因此', '如果', '如何', '或者', '还是', '一些', '很多', '更加', '非常', '不断', '需要', '可以', '拥有',
+    '不会', '不会', '一定', '必须', '可能', '应该', '能够', '比如', '比如说', '比如在', '例如', '以及', '具有', '相关', '各种',
+    '作为', '以及', '一种', '一些', '那些', '这些', '这样', '那样', '这里', '那里', '哪里', '什么', '怎么', '哪些', '哪种',
+    '为了', '其中', '因为', '所以', '然后', '但是', '而且', '并且', '或者', '不过', '只是', '就是', '其实', '可能', '需要',
+    '用户', '读者', '观众', '朋友', '大家', '老师', '同学', '孩子', '父母', '家长', '企业', '公司', '客户', '平台', '产品',
+    '一个', '两个', '三个', '第一', '第二', '第三', '很多', '部分', '一些', '每个', '多个', '各种', '不同', '更加', '非常',
+    '提高', '提升', '发展', '实施', '完成', '达到', '实现', '带来', '创造', '打造', '发现', '选择', '带着', '注意', '其实',
+    '看到', '发现', '认为', '表示', '觉得', '希望', '喜欢', '关注', '了解', '分享', '推荐', '点击', '查看', '登录', '下载',
+    '文章', '内容', '标题', '摘要', '作者', '查看', '阅读', '点赞', '互动', '评论', '粉丝', '用户', '公众号', '微信',
+    '同时', '目前', '现在', '未来', '去年', '今年', '本次', '此次', '每天', '每年', '每日', '每周', '近期', '最近', '快来', '速看'
   ]);
 
-  const wordCount: Record<string, number> = {};
-  words.forEach(word => {
-    // 跳过单个字和停用词
-    if (word.length < 2 || stopWords.has(word)) return;
+  type WordStats = {
+    docCount: number;
+    score: number;
+  };
 
-    wordCount[word] = (wordCount[word] || 0) + 1;
+  const wordMap = new Map<string, WordStats>();
+
+  articles.forEach(article => {
+    const textSource = [article.title, article.content, article.wx_name]
+      .filter(Boolean)
+      .join(' ')
+      .replace(/[^\u4e00-\u9fa5a-zA-Z0-9]/g, ' ');
+
+    const candidates = textSource.match(/[\u4e00-\u9fa5a-zA-Z0-9]{2,}/g) || [];
+    const uniqueTokens = new Set<string>();
+
+    candidates.forEach(token => {
+      const normalized = token.toLowerCase();
+      const isNumeric = /^[0-9]+$/.test(normalized);
+      if (normalized.length < 2 || isNumeric || stopWords.has(normalized)) {
+        return;
+      }
+      uniqueTokens.add(normalized);
+    });
+
+    if (uniqueTokens.size === 0) {
+      return;
+    }
+
+    const readSafe = Number(article.read) || 0;
+    const articleHot = Math.log10(readSafe + 10);
+
+    uniqueTokens.forEach(token => {
+      const stats = wordMap.get(token) || { docCount: 0, score: 0 };
+      stats.docCount += 1;
+      stats.score += articleHot;
+      wordMap.set(token, stats);
+    });
   });
 
-  // 排序并过滤掉出现次数少于2次的词，取前20个高频词
-  return Object.entries(wordCount)
-    .sort(([, a], [, b]) => b - a)
-    .filter(([, count]) => count >= 2)
-    .slice(0, 20)
-    .map(([word, count]) => ({ word, count }));
+  return Array.from(wordMap.entries())
+    .filter(([, stats]) => stats.docCount >= 5)
+    .sort(([, a], [, b]) => b.score - a.score)
+    .slice(0, 30)
+    .map(([word, stats]) => ({
+      word,
+      count: stats.docCount,
+      score: parseFloat(stats.score.toFixed(2)),
+    }));
 }
 
 /**
