@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react';
 import { TopicAnalysis, WechatArticle } from '@/types';
 import { generateInsightReport } from '@/lib/analysisService';
-import { DataTestingPanel } from './DataTestingPanel';
+import { AIInsightCards } from './AIInsightCards';
 
 interface InsightReportProps {
   analysis: TopicAnalysis;
@@ -15,7 +15,7 @@ export function InsightReport({ analysis, articles }: InsightReportProps) {
   const [articleSortKey, setArticleSortKey] = useState<'praise' | 'read' | 'publish_time'>('praise');
 
   const insightData = generateInsightReport(articles, analysis.keyword);
-  const { topLikedArticles, topEngagementArticles, wordCloud, insights, summary } = insightData;
+  const { topLikedArticles, topEngagementArticles, wordCloud, summary } = insightData;
   const sortedArticlesForModal = useMemo(() => {
     const getPublishTimestamp = (article: WechatArticle) => {
       if (article.publish_time && article.publish_time > 0) {
@@ -181,7 +181,7 @@ export function InsightReport({ analysis, articles }: InsightReportProps) {
       </div>
 
       {/* 词云 / 阅读分布 / 发布时间分布 */}
-      {(wordCloud.length > 0 || summary.readCountDistribution || summary.publishTimeDistribution) && (
+      {(wordCloud.length > 0 || 'readCountDistribution' in summary && summary.readCountDistribution || 'publishTimeDistribution' in summary && summary.publishTimeDistribution) && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* 高频词云 */}
           {wordCloud.length > 0 && (
@@ -206,11 +206,11 @@ export function InsightReport({ analysis, articles }: InsightReportProps) {
           )}
 
           {/* 阅读量分布 */}
-          {summary.readCountDistribution && (
+          {'readCountDistribution' in summary && summary.readCountDistribution && (
             <div className="bg-white p-6 rounded-lg shadow flex flex-col h-[300px]">
               <h3 className="text-lg font-semibold text-gray-900 mb-4">📊 阅读量分布</h3>
               <div className="space-y-3 overflow-y-auto pr-2">
-                {summary.readCountDistribution.map((item) => (
+                {summary.readCountDistribution.map((item: any) => (
                   <div key={item.range} className="flex items-center">
                     <div className="w-20 text-sm text-gray-600">{item.label}</div>
                     <div className="flex-1 mx-4 bg-gray-200 rounded-full h-6 relative">
@@ -229,11 +229,11 @@ export function InsightReport({ analysis, articles }: InsightReportProps) {
           )}
 
           {/* 发布时间分布 */}
-          {summary.publishTimeDistribution && (
+          {'publishTimeDistribution' in summary && summary.publishTimeDistribution && (
             <div className="bg-white p-6 rounded-lg shadow flex flex-col h-[300px]">
               <h3 className="text-lg font-semibold text-gray-900 mb-4">⏰ 发布时间分布</h3>
               <div className="space-y-3 overflow-y-auto pr-2">
-                {summary.publishTimeDistribution.map((item) => (
+                {summary.publishTimeDistribution.map((item: any) => (
                   <div key={item.range} className="flex items-center">
                     <div className="w-24 text-sm text-gray-600">{item.label}</div>
                     <div className="flex-1 mx-4 bg-gray-200 rounded-full h-6 relative">
@@ -327,24 +327,14 @@ export function InsightReport({ analysis, articles }: InsightReportProps) {
         )}
       </div>
 
-      {/* 洞察建议 */}
-      {insights.length > 0 && (
-        <div className="bg-white p-6 rounded-lg shadow">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">💡 洞察建议</h3>
-          <div className="space-y-3">
-            {insights.map((insight, index) => (
-              <div key={index} className="flex items-start space-x-3">
-                <span className="text-yellow-500 text-xl">💡</span>
-                <p className="text-gray-700">{insight}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+      {/* AI 洞察建议 - Bento 风格卡片 */}
+      <AIInsightCards
+        keyword={analysis.keyword}
+        analysisId={analysis.id}
+        className="mb-6"
+      />
 
-      {/* 数据测试面板 */}
-      <DataTestingPanel articles={articles} />
-
+  
       {/* 文章列表弹窗 */}
       {showAllArticles && (
         <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">

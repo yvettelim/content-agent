@@ -119,6 +119,21 @@ export interface TopicInsight {
   createdAt: string;
 }
 
+export interface AIInsightSuggestion {
+  title: string;
+  reason: string;
+  dataSupport: string;
+}
+
+export interface TopicAnalysisSections {
+  trendsAndDirections: string[];
+  userPainPoints: string[];
+  highFrequencyKeywords: string[];
+  contentStructurePatterns: string[];
+  highEngagementTraits: string[];
+  reusableTopicSuggestions: AIInsightSuggestion[];
+}
+
 // 内容创作相关类型
 export interface Content {
   id: string;

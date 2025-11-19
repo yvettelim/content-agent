@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3';
 import path from 'path';
-import { TopicAnalysis, WechatArticle } from '@/types';
+import { TopicAnalysis, WechatArticle, AIInsightSuggestion } from '@/types';
 
 // 数据库文件路径
 const dbPath = path.join(process.cwd(), 'content-agent.db');
@@ -83,6 +83,23 @@ export function initDatabase() {
     );
   `);
 
+  // 创建AI洞察报告缓存表
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS insight_reports (
+      id TEXT PRIMARY KEY,
+      keyword TEXT NOT NULL,
+      insights TEXT NOT NULL, -- JSON字符串，包含5条洞察建议
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL, -- 过期时间
+      article_count INTEGER NOT NULL, -- 分析的文章数量
+      avg_engagement_rate REAL DEFAULT 0, -- 平均互动率
+      model_used TEXT DEFAULT 'openai/gpt-4o-mini', -- 使用的模型
+      analysis_id TEXT, -- 关联的分析ID（可选）
+
+      FOREIGN KEY (analysis_id) REFERENCES topic_analyses (id) ON DELETE SET NULL
+    );
+  `);
+
   // 创建索引
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_analyses_keyword ON topic_analyses(keyword);
@@ -91,6 +108,11 @@ export function initDatabase() {
     CREATE INDEX IF NOT EXISTS idx_articles_analysis_id ON articles(analysis_id);
     CREATE INDEX IF NOT EXISTS idx_articles_title ON articles(title);
     CREATE INDEX IF NOT EXISTS idx_articles_publish_time ON articles(publish_time);
+
+    -- 洞察报告缓存表索引
+    CREATE INDEX IF NOT EXISTS idx_insight_reports_keyword ON insight_reports(keyword);
+    CREATE INDEX IF NOT EXISTS idx_insight_reports_expires_at ON insight_reports(expires_at);
+    CREATE INDEX IF NOT EXISTS idx_insight_reports_created_at ON insight_reports(created_at);
   `);
 
   console.log('数据库初始化完成');
@@ -314,6 +336,135 @@ export function deleteAnalysis(id: string): boolean {
     console.error('删除分析记录失败:', error);
     return false;
   }
+}
+
+/**
+ * 保存AI洞察报告到缓存表
+ */
+export function saveInsightReport(
+  keyword: string,
+  insights: AIInsightSuggestion[],
+  articleCount: number,
+  avgEngagementRate: number = 0,
+  analysisId?: string,
+  modelUsed: string = 'openai/gpt-4o-mini'
+): string {
+  const id = crypto.randomUUID();
+  const createdAt = new Date().toISOString();
+  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(); // 24小时后过期
+
+  const stmt = db.prepare(`
+    INSERT INTO insight_reports (
+      id, keyword, insights, created_at, expires_at, article_count,
+      avg_engagement_rate, model_used, analysis_id
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  stmt.run(
+    id,
+    keyword,
+    JSON.stringify(insights),
+    createdAt,
+    expiresAt,
+    articleCount,
+    avgEngagementRate,
+    modelUsed,
+    analysisId || null
+  );
+
+  return id;
+}
+
+/**
+ * 获取有效的洞察报告（未过期的）
+ */
+export function getValidInsightReport(keyword: string): {
+  id: string;
+  keyword: string;
+  insights: AIInsightSuggestion[];
+  created_at: string;
+  expires_at: string;
+  article_count: number;
+  avg_engagement_rate: number;
+  model_used: string;
+} | null {
+  const now = new Date().toISOString();
+
+  const stmt = db.prepare(`
+    SELECT * FROM insight_reports
+    WHERE keyword = ? AND expires_at > ?
+    ORDER BY created_at DESC
+    LIMIT 1
+  `);
+
+  const result = stmt.get(keyword, now) as any;
+
+  if (result) {
+    try {
+      const parsed = JSON.parse(result.insights);
+      return {
+        ...result,
+        insights: normalizeInsightRecords(parsed)
+      };
+    } catch (error) {
+      console.error('解析洞察建议失败:', error);
+      return null;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * 强制删除某个关键词的洞察缓存（用于强制刷新）
+ */
+export function deleteInsightReportsByKeyword(keyword: string): number {
+  const stmt = db.prepare('DELETE FROM insight_reports WHERE keyword = ?');
+  const result = stmt.run(keyword);
+  return result.changes;
+}
+
+/**
+ * 清理过期的洞察报告
+ */
+export function cleanupExpiredInsightReports(): number {
+  const now = new Date().toISOString();
+  const stmt = db.prepare('DELETE FROM insight_reports WHERE expires_at <= ?');
+  const result = stmt.run(now);
+  return result.changes;
+}
+
+function normalizeInsightRecords(raw: unknown): AIInsightSuggestion[] {
+  const defaultDataSupport = '聚合文章阅读、点赞、在看、发布时间与账号行业等维度，结合趋势分析与对标方法得出结论。';
+
+  const container = raw && typeof raw === 'object' && !Array.isArray(raw) && 'suggestions' in (raw as any)
+    ? (raw as any).suggestions
+    : raw;
+  const entries = Array.isArray(container) ? container : [];
+
+  return entries.map((item, index) => {
+    if (typeof item === 'string') {
+      const text = item.trim();
+      const title = text.slice(0, 15) || `洞察建议${index + 1}`;
+      return {
+        title,
+        reason: text || '建议关注高表现文章的内容结构和表达方式，优化选题策略。',
+        dataSupport: defaultDataSupport,
+      };
+    }
+
+    const record = item as any;
+    const title = (record?.title || record?.name || record?.Title || `洞察建议${index + 1}`).toString().trim().slice(0, 15) || `洞察建议${index + 1}`;
+    const reason = (record?.reason || record?.insight || record?.description || '').toString().trim() ||
+      '建议结合行业热点，明确内容定位与核心价值，形成差异化叙事。';
+    const dataSupport = (record?.dataSupport || record?.data_support || record?.data || '').toString().trim() || defaultDataSupport;
+
+    return {
+      title,
+      reason,
+      dataSupport,
+    };
+  });
 }
 
 /**

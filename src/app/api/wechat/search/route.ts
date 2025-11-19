@@ -1,36 +1,53 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { searchWechatArticles, getArticlesWithPagination, WechatApiParams } from '@/lib/api';
 
-export async function POST(request: NextRequest) {
+export async function GET(request: NextRequest) {
   try {
-    const body = await request.json();
-    const params: WechatApiParams = body;
+    const { searchParams } = new URL(request.url);
+    const keyword = searchParams.get('keyword');
 
-    // 验证必要参数
-    if (!params.kw) {
-      return NextResponse.json({
-        success: false,
-        error: '缺少关键词参数'
-      }, { status: 400 });
+    if (!keyword) {
+      return NextResponse.json(
+        { error: 'Missing keyword parameter' },
+        { status: 400 }
+      );
     }
 
-    // 根据是否需要分页决定调用哪个方法
-    const usePagination = body.usePagination || false;
-    const maxPages = body.maxPages || 5;
+    // 使用API密钥
+    const apiKey = '25ba56491d799f392c7d';
 
-    const result = usePagination
-      ? await getArticlesWithPagination(params, maxPages)
-      : await searchWechatArticles(params);
+    // 构建外部API URL
+    const externalUrl = `http://data.wxrank.com/weixin/getso?key=${encodeURIComponent(apiKey)}&keyword=${encodeURIComponent(keyword)}`;
 
-    return NextResponse.json({
-      success: true,
-      data: result
+    console.log('Proxying request to:', externalUrl);
+
+    // 调用外部API
+    const response = await fetch(externalUrl, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+      },
     });
+
+    if (!response.ok) {
+      throw new Error(`External API error: ${response.status} ${response.statusText}`);
+    }
+
+    const data = await response.json();
+
+    // 返回响应
+    return NextResponse.json(data);
+
   } catch (error) {
-    console.error('公众号搜索失败:', error);
-    return NextResponse.json({
-      success: false,
-      error: error instanceof Error ? error.message : '公众号搜索失败'
-    }, { status: 500 });
+    console.error('Search articles proxy error:', error);
+
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+
+    return NextResponse.json(
+      {
+        error: 'Search articles failed',
+        message: errorMessage
+      },
+      { status: 500 }
+    );
   }
 }

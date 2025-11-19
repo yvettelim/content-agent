@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { CreationConfig } from '@/components/creation/CreationConfig';
+import { CreationConfig, CreationStartConfig } from '@/components/creation/CreationConfig';
 import { PreviewArea } from '@/components/creation/PreviewArea';
 import { ImageManager } from '@/components/creation/ImageManager';
 
@@ -9,8 +9,9 @@ export default function CreatePage() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
 
-  const handleStartCreation = () => {
+  const handleStartCreation = (config: CreationStartConfig) => {
     setIsGenerating(true);
+    console.log('开始创作，配置：', config);
     // 模拟生成过程
     setTimeout(() => {
       setIsGenerating(false);

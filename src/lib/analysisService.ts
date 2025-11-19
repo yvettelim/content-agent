@@ -1,5 +1,5 @@
-import { searchWechatArticles, WechatApiParams } from './api';
-import { saveAnalysis, fetchAnalysisDetail, searchWechatArticles as fetchWechatArticles } from './apiService';
+import { saveAnalysis, fetchAnalysisDetail, collectWechatArticles, NewApiCollectionParams } from './apiService';
+import { collectArticlesByKeyword, CollectionOptions } from './newApiService';
 import { TopicAnalysis, WechatArticle } from '@/types';
 
 export interface AnalysisProgress {
@@ -15,7 +15,8 @@ export interface AnalysisConfig {
   timeRange: number;
   includeAnyKeywords?: string;
   excludeKeywords?: string;
-  maxPages?: number;
+  wxid?: string;
+  collectionMode?: 'keyword' | 'account';
 }
 
 /**
@@ -55,47 +56,74 @@ export async function performTopicAnalysis(
     onProgress?.({
       currentStep: 2,
       totalSteps: 5,
-      currentMessage: '正在调用公众号API...',
+      currentMessage: config.collectionMode === 'account' ? '正在采集指定公众号数据...' : '正在搜索关键词相关文章...',
       percentage: 25
     });
 
-    const apiParams: WechatApiParams = {
-      kw: config.keyword,
-      sort_type: 1, // 按发布时间排序，确保覆盖完整时间范围
-      mode: 1,
-      period: config.timeRange,
-      page: 1,
-      any_kw: config.includeAnyKeywords || '',
-      ex_kw: config.excludeKeywords || '',
-      type: 1,
-    };
+    let apiResponse: any;
 
-    // 计算需要获取的页数（每页默认20条，API返回）
-    const minPagesNeeded = Math.ceil(config.articleCount / 20) || 1;
-    const maxPages = Math.min(
-      20,
-      config.maxPages ? Math.max(config.maxPages, minPagesNeeded) : Math.max(5, minPagesNeeded)
-    );
+    if (config.collectionMode === 'account') {
+      // 使用公众号采集模式
+      const newApiParams: NewApiCollectionParams = {
+        wxid: config.wxid,
+        keyword: config.keyword,
+        articleCount: config.articleCount as 10 | 20 | 50 | 100,
+        enableContentCollection: true,
+        enableRankCollection: true,
+      };
 
-    const apiResponse = await fetchWechatArticles({
-      ...apiParams,
-      usePagination: true,
-      maxPages,
-    });
+      apiResponse = await collectWechatArticles(newApiParams);
+    } else {
+      // 使用新的关键词搜索模式
+      const collectionOptions: CollectionOptions = {
+        articleCount: config.articleCount as 10 | 20 | 50 | 100,
+        batchSize: 10,
+        batchDelay: 500,
+        enableContentCollection: true,
+        enableRankCollection: true,
+      };
 
-    if (apiResponse.data.length === 0) {
-      throw new Error(`未找到关键词"${config.keyword}"的相关文章，请尝试使用其他关键词`);
+      apiResponse = await collectArticlesByKeyword(config.keyword, collectionOptions);
     }
 
-    onProgress?.({
-      currentStep: 3,
-      totalSteps: 5,
-      currentMessage: `找到 ${apiResponse.data.length} 篇文章，正在处理数据...`,
-      percentage: 60
-    });
+    // 处理不同API模式的响应结构
+    let convertedArticles: WechatArticle[];
 
-    // 第3步：处理和分析数据
-    const processedArticles = processArticles(apiResponse.data);
+    if (config.collectionMode === 'account') {
+      // 公众号采集模式通过API route已经转换好数据，返回结构：{ data: articles[] }
+      const accountApiResponse = apiResponse.data || [];
+      if (accountApiResponse.length === 0) {
+        throw new Error(`公众号"${config.wxid}"暂无文章数据`);
+      }
+
+      // API route已经用batchConvertArticles转换过，直接使用
+      convertedArticles = accountApiResponse;
+
+      onProgress?.({
+        currentStep: 3,
+        totalSteps: 5,
+        currentMessage: `找到 ${convertedArticles.length} 篇文章，正在处理数据...`,
+        percentage: 60
+      });
+    } else {
+      // 关键词搜索模式直接返回CompleteArticleData[]，需要转换
+      const keywordArticlesData = apiResponse || [];
+      if (keywordArticlesData.length === 0) {
+        throw new Error(`未找到关键词"${config.keyword}"的相关文章，请尝试使用其他关键词`);
+      }
+
+      onProgress?.({
+        currentStep: 3,
+        totalSteps: 5,
+        currentMessage: `找到 ${keywordArticlesData.length} 篇文章，正在处理数据...`,
+        percentage: 60
+      });
+
+      // 关键词搜索模式返回的数据需要转换
+      convertedArticles = convertSearchApiDataToWechatArticles(keywordArticlesData);
+    }
+
+    const processedArticles = processArticles(convertedArticles);
     const filteredArticles = filterArticlesByTimeRange(processedArticles, config.timeRange);
 
     const limitedArticles = config.articleCount > 0
@@ -318,6 +346,8 @@ export function generateInsightReport(articles: WechatArticle[], keyword?: strin
         avgEngagementRate: 0,
         avgReadCount: 0,
         avgPraiseCount: 0,
+        readCountDistribution: calculateReadCountDistribution([]),
+        publishTimeDistribution: calculatePublishTimeDistribution([]),
       }
     };
   }
@@ -673,4 +703,118 @@ function generateInsights(articles: WechatArticle[]): string[] {
   insights.push('关注高互动文章的内容结构和表达方式');
 
   return insights;
+}
+
+/**
+ * 将关键词搜索API数据格式转换为WechatArticle格式
+ */
+function convertSearchApiDataToWechatArticles(completeArticles: any[]): WechatArticle[] {
+  if (!Array.isArray(completeArticles)) {
+    console.error('Expected array but got:', typeof completeArticles, completeArticles);
+    return [];
+  }
+
+  return completeArticles.map(article => {
+    const detailInfo = article.detailInfo || {};
+    const rankInfo = article.rankInfo || {};
+    const accountInfo = article.accountInfo || {};
+    const basicInfo = article.basicInfo || {};
+
+    return {
+      // WechatArticle 必需字段
+      title: basicInfo.title || detailInfo.title || '',
+      content: detailInfo.text || detailInfo.html || '',
+      url: basicInfo.art_url || detailInfo.article_url || '',
+      wx_name: accountInfo.name || '',
+      wx_id: accountInfo.user_name || '',
+      publish_time: detailInfo.pub_time ?
+        Math.floor(new Date(detailInfo.pub_time).getTime() / 1000) :
+        (basicInfo.pub_time ? Math.floor(new Date(basicInfo.pub_time).getTime() / 1000) : 0),
+      publish_time_str: detailInfo.pub_time || basicInfo.pub_time || '',
+      read: rankInfo.read_num || 0,
+      praise: rankInfo.like_num || 0,
+      looking: rankInfo.look_num || 0,
+
+      // 缺少的必需字段 - 提供默认值
+      avatar: basicInfo.pic_url || detailInfo.msg_cdn_url || '',
+      classify: '',
+      ghid: '',
+      ip_wording: '',
+      is_original: parseInt(detailInfo.copyright_stat) || 0,
+      short_link: '',
+      update_time: 0,
+      update_time_str: '',
+
+      // 可选字段
+      digest: detailInfo.digest || '',
+      cover: basicInfo.pic_url || detailInfo.msg_cdn_url || '',
+      wx_headimg: accountInfo.headImgUrl || '',
+      wx_desc: accountInfo.signature || '',
+      share: rankInfo.share_num || 0,
+      collect: rankInfo.collect_num || 0,
+      reward: rankInfo.reward_count || 0,
+      comment: rankInfo.comment_count || 0,
+      author: detailInfo.author || '',
+      copyright_stat: parseInt(detailInfo.copyright_stat) || 0,
+      province_name: detailInfo.province_name || '',
+      collectionStatus: article.collectionStatus,
+    } as WechatArticle;
+  });
+}
+
+/**
+ * 将新API数据格式转换为WechatArticle格式（用于公众号采集模式）
+ */
+function convertNewApiDataToWechatArticles(completeArticles: any[]): WechatArticle[] {
+  if (!Array.isArray(completeArticles)) {
+    console.error('Expected array but got:', typeof completeArticles, completeArticles);
+    return [];
+  }
+
+  return completeArticles.map(article => {
+    const detailInfo = article.detailInfo || {};
+    const rankInfo = article.rankInfo || {};
+    const accountInfo = article.accountInfo || {};
+    const basicInfo = article.basicInfo || {};
+
+    return {
+      // WechatArticle 必需字段
+      title: basicInfo.title || detailInfo.title || '',
+      content: detailInfo.text || detailInfo.html || '',
+      url: basicInfo.art_url || detailInfo.article_url || '',
+      wx_name: accountInfo.name || '',
+      wx_id: accountInfo.user_name || '',
+      publish_time: detailInfo.pub_time ?
+        Math.floor(new Date(detailInfo.pub_time).getTime() / 1000) :
+        (basicInfo.pub_time ? Math.floor(new Date(basicInfo.pub_time).getTime() / 1000) : 0),
+      publish_time_str: detailInfo.pub_time || basicInfo.pub_time || '',
+      read: rankInfo.read_num || 0,
+      praise: rankInfo.like_num || 0,
+      looking: rankInfo.look_num || 0,
+
+      // 缺少的必需字段 - 提供默认值
+      avatar: basicInfo.pic_url || detailInfo.msg_cdn_url || '',
+      classify: '',
+      ghid: '',
+      ip_wording: '',
+      is_original: parseInt(detailInfo.copyright_stat) || 0,
+      short_link: '',
+      update_time: 0,
+      update_time_str: '',
+
+      // 可选字段
+      digest: detailInfo.digest || '',
+      cover: basicInfo.pic_url || detailInfo.msg_cdn_url || '',
+      wx_headimg: accountInfo.headImgUrl || '',
+      wx_desc: accountInfo.signature || '',
+      share: rankInfo.share_num || 0,
+      collect: rankInfo.collect_num || 0,
+      reward: rankInfo.reward_count || 0,
+      comment: rankInfo.comment_count || 0,
+      author: detailInfo.author || '',
+      copyright_stat: parseInt(detailInfo.copyright_stat) || 0,
+      province_name: detailInfo.province_name || '',
+      collectionStatus: article.collectionStatus,
+    } as WechatArticle;
+  });
 }
